@@ -3,5 +3,11 @@
   "uuid": "9af02e0c-9050-46b6-9622-8d2d12b7be79",
   "creator": {
     "version": "3.8.8"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }
