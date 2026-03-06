@@ -240,6 +240,13 @@
     "_enabled": true,
     "__prefab": null,
     "moveSpeed": 200,
+    "bodyColor": {
+      "__type__": "cc.Color",
+      "r": 110,
+      "g": 220,
+      "b": 120,
+      "a": 255
+    },
     "_id": "eauUikwjBLJZSXrt1inWB2"
   },
   {
