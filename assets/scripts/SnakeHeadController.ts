@@ -1,5 +1,5 @@
 import { _decorator, Color, Component, EventKeyboard, Graphics, input, Input, KeyCode, Layers, Node, UITransform, Vec2, Vec3 } from 'cc';
-import { GAME_EVENT_FOOD_EATEN } from './GameEvents';
+import { GAME_EVENT_FOOD_EATEN, GAME_EVENT_SNAKE_DIED } from './GameEvents';
 
 const { ccclass, property } = _decorator;
 
@@ -17,6 +17,7 @@ export class SnakeHeadController extends Component {
     private readonly _moveDirection: Vec3 = new Vec3(0, 0, 0);
     private readonly _bodySegments: Node[] = [];
     private readonly _headPath: Vec3[] = [];
+    private readonly _initialPosition: Vec3 = new Vec3();
     private _eventNode: Node | null = null;
     private _segmentGap = 32;
 
@@ -27,6 +28,7 @@ export class SnakeHeadController extends Component {
         input.on(Input.EventType.KEY_DOWN, this.onKeyDown, this);
         input.on(Input.EventType.KEY_UP, this.onKeyUp, this);
         this.bindFoodEatenEvent();
+        this.captureInitialPosition();
         this.initializeBodyPath();
     }
 
@@ -37,14 +39,7 @@ export class SnakeHeadController extends Component {
         input.off(Input.EventType.KEY_DOWN, this.onKeyDown, this);
         input.off(Input.EventType.KEY_UP, this.onKeyUp, this);
         this.unbindFoodEatenEvent();
-
-        // 蛇身节点不是蛇头子节点，需要手动回收避免场景残留。
-        for (const segmentNode of this._bodySegments) {
-            if (segmentNode.isValid) {
-                segmentNode.destroy();
-            }
-        }
-        this._bodySegments.length = 0;
+        this.destroyBodySegments();
         this._headPath.length = 0;
     }
 
@@ -61,12 +56,31 @@ export class SnakeHeadController extends Component {
         const nextX = currentPos.x + this._moveDirection.x * this.moveSpeed * deltaTime;
         const nextY = currentPos.y + this._moveDirection.y * this.moveSpeed * deltaTime;
 
+        // 使用“下一帧位置”提前做边界判定，命中后直接结束当前局，避免蛇身轨迹继续写入错误数据。
+        if (this.isTouchingBoardBoundary(nextX, nextY)) {
+            this.notifySnakeDied();
+            return;
+        }
+
         // 按方向、速度和帧间隔计算位移，保证不同帧率下移动速度一致。
         this.node.setPosition(nextX, nextY, currentPos.z);
 
         this.recordHeadPath(nextX, nextY, currentPos.z);
         this.updateBodyFollowByPath();
         this.trimHeadPath();
+    }
+
+    /**
+     * 将蛇恢复到开局状态：
+     * 1. 回到初始位置；
+     * 2. 停止当前移动；
+     * 3. 清空蛇身与轨迹缓存。
+     */
+    public resetState(): void {
+        this._moveDirection.set(0, 0, 0);
+        this.destroyBodySegments();
+        this.node.setPosition(this._initialPosition.x, this._initialPosition.y, this._initialPosition.z);
+        this.initializeBodyPath();
     }
 
     /**
@@ -161,6 +175,14 @@ export class SnakeHeadController extends Component {
             const bodySegmentNode = this.createBodySegment(parentNode, spawnPosition);
             this._bodySegments.push(bodySegmentNode);
         }
+    }
+
+    /**
+     * 记录开局时的蛇头位置，供重开时复位使用。
+     */
+    private captureInitialPosition(): void {
+        const initialPosition = this.node.position;
+        this._initialPosition.set(initialPosition.x, initialPosition.y, initialPosition.z);
     }
 
     /**
@@ -287,6 +309,67 @@ export class SnakeHeadController extends Component {
         if (cutIndex > 0) {
             this._headPath.splice(0, cutIndex);
         }
+    }
+
+    /**
+     * 判断蛇头下一帧是否触碰到棋盘边界。
+     * @param nextX 蛇头下一帧中心点 x 坐标
+     * @param nextY 蛇头下一帧中心点 y 坐标
+     */
+    private isTouchingBoardBoundary(nextX: number, nextY: number): boolean {
+        const boardNode = this.node.parent;
+        if (!boardNode) {
+            return false;
+        }
+
+        const boardTransform = boardNode.getComponent(UITransform);
+        const headTransform = this.node.getComponent(UITransform);
+        if (!boardTransform || !headTransform) {
+            return false;
+        }
+
+        const boardSize = boardTransform.contentSize;
+        const boardAnchor = boardTransform.anchorPoint;
+        const boardLeft = -boardSize.width * boardAnchor.x;
+        const boardRight = boardSize.width * (1 - boardAnchor.x);
+        const boardBottom = -boardSize.height * boardAnchor.y;
+        const boardTop = boardSize.height * (1 - boardAnchor.y);
+
+        const headSize = headTransform.contentSize;
+        const headAnchor = headTransform.anchorPoint;
+        const headLeft = nextX - headSize.width * headAnchor.x;
+        const headRight = nextX + headSize.width * (1 - headAnchor.x);
+        const headBottom = nextY - headSize.height * headAnchor.y;
+        const headTop = nextY + headSize.height * (1 - headAnchor.y);
+
+        // 用户要求“触碰边界即死亡”，因此这里使用 <= / >=，而不是仅检测越界。
+        return headLeft <= boardLeft || headRight >= boardRight || headBottom <= boardBottom || headTop >= boardTop;
+    }
+
+    /**
+     * 抛出蛇死亡事件，交给游戏控制器负责重新开局。
+     */
+    private notifySnakeDied(): void {
+        const eventNode = this._eventNode ?? this.node.parent;
+        if (!eventNode) {
+            return;
+        }
+
+        this._moveDirection.set(0, 0, 0);
+        eventNode.emit(GAME_EVENT_SNAKE_DIED);
+    }
+
+    /**
+     * 销毁当前所有蛇身节点。
+     */
+    private destroyBodySegments(): void {
+        // 蛇身节点不是蛇头子节点，需要手动回收避免场景残留。
+        for (const segmentNode of this._bodySegments) {
+            if (segmentNode.isValid) {
+                segmentNode.destroy();
+            }
+        }
+        this._bodySegments.length = 0;
     }
 
     /**

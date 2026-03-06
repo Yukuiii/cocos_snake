@@ -1,7 +1,8 @@
 import { _decorator, Component, Node, UITransform, warn } from 'cc';
 import { FoodBlockSpawner } from './FoodBlockSpawner';
-import { GAME_EVENT_FOOD_EATEN } from './GameEvents';
+import { GAME_EVENT_FOOD_EATEN, GAME_EVENT_SNAKE_DIED } from './GameEvents';
 import { ScoreDisplayController } from './ScoreDisplayController';
+import { SnakeHeadController } from './SnakeHeadController';
 
 const { ccclass, property } = _decorator;
 
@@ -28,11 +29,24 @@ export class GameInitializer extends Component {
     private _foodEatenCount = 0;
 
     /**
-     * 组件启动时执行开局初始化。
+     * 组件启用后开始监听“蛇死亡”事件。
+     */
+    onEnable(): void {
+        this.node.on(GAME_EVENT_SNAKE_DIED, this.onSnakeDied, this);
+    }
+
+    /**
+     * 组件禁用后移除“蛇死亡”事件监听。
+     */
+    onDisable(): void {
+        this.node.off(GAME_EVENT_SNAKE_DIED, this.onSnakeDied, this);
+    }
+
+    /**
+     * 组件启动时开始第一局游戏。
      */
     start(): void {
-        this.ensureScoreDisplay().resetScore();
-        this.initialize();
+        this.restartGame();
     }
 
     /**
@@ -60,6 +74,31 @@ export class GameInitializer extends Component {
 
         this._foodSpawner ??= new FoodBlockSpawner(this.foodSize, this.foodPadding, this.foodSpawnMaxTries);
         this._foodSpawner.spawnOnce(this.node, snakeHeadNode);
+    }
+
+    /**
+     * 重新开始一局游戏：
+     * 1. 重置蛇的状态；
+     * 2. 清空分数；
+     * 3. 重新生成食物。
+     */
+    public restartGame(): void {
+        const snakeHeadNode = this.resolveSnakeHeadNode();
+        if (!snakeHeadNode) {
+            return;
+        }
+
+        const snakeController = snakeHeadNode.getComponent(SnakeHeadController);
+        if (!snakeController) {
+            warn('[GameInitializer] snake_head 未挂载 SnakeHeadController，无法重新开始游戏。');
+            return;
+        }
+
+        // 先复位蛇，再刷新分数和食物，避免新食物刷在死亡瞬间的错误位置上。
+        snakeController.resetState();
+        this._foodEatenCount = 0;
+        this.ensureScoreDisplay().resetScore();
+        this.initialize();
     }
 
     /**
@@ -107,6 +146,13 @@ export class GameInitializer extends Component {
         this._foodSpawner.spawnOnce(this.node, snakeHeadNode);
         this._foodEatenCount += 1;
         this.node.emit(GAME_EVENT_FOOD_EATEN, this._foodEatenCount);
+    }
+
+    /**
+     * 处理蛇头死亡事件，并立即开始新一局。
+     */
+    private onSnakeDied(): void {
+        this.restartGame();
     }
 
     /**
